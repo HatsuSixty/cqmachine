@@ -1,0 +1,129 @@
+#!/bin/env python3
+
+from dataclasses import dataclass
+from enum import auto, Enum
+from typing import *
+from subprocess import run
+from sys import stderr
+
+class Architecture(Enum):
+    X86_64=auto()
+    X86=auto()
+
+@dataclass
+class Machine:
+    name: str
+    ram: int
+    storage: int
+    cpu: int
+    cd: Optional[str]
+    kvm: bool
+    arch: Architecture
+
+MachineParam = Union[int, str, bool, None]
+
+def input_int(prompt: str) -> int:
+    done = False
+    val = 0
+    while not done:
+        inp = ""
+
+        try: inp = input(prompt + ": ")
+        except EOFError:
+            done = False
+            print()
+
+        if inp:
+            try:
+                val = int(inp)
+                done = val != 0
+            except ValueError: done = False
+        else: done = False
+    return val
+
+def input_str(prompt: str) -> str:
+    done = False
+    val = ""
+    while not done:
+        try: val = input(prompt + ": ")
+        except EOFError:
+            done = False
+            print()
+        done = not (not val)
+    return val
+
+def input_str_opt(prompt: str) -> Optional[str]:
+    val = input(prompt + ": ")
+    return val if val else None
+
+def input_bool(prompt: str) -> bool:
+    inp = ""
+
+    try: inp = input(prompt + " (Yes/No): ")
+    except EOFError:
+        print()
+        return False
+
+    return bool(inp) if (not inp.upper() in ["FALSE", "F", "NO", "N"]) else False
+
+def create_machine() -> Machine:
+    print("Create Virtual Machine")
+    machine_name = input_str("Name")
+    machine_ram = input_int("Amount of ram (MB)")
+    machine_storage = input_int("Amount of storage (MB)")
+    machine_cpu = input_int("Amount of CPU cores")
+    machine_cd = input_str_opt("ISO image (optional)")
+    machine_kvm = input_bool("Enable KVM")
+    machine_arch = Architecture.X86_64
+
+    while True:
+        arch_str = input_str("Architecture (x86/x86_64)").upper()
+        if arch_str == "X86":
+            machine_arch = Architecture.X86
+            break
+        elif arch_str == "X86_64":
+            machine_arch = Architecture.X86_64
+            break
+        else:
+            continue
+    return Machine(machine_name, machine_ram, machine_storage, machine_cpu, machine_cd, machine_kvm, machine_arch)
+
+def create_script_from_machine(machine: Machine) -> str:
+    script = ""
+
+    script += f"""#!/bin/sh
+
+if [ ! -f "disk.qcow2" ]; then
+    qemu-img create -f qcow2 disk.qcow2 {machine.storage}M
+fi
+
+"""
+    if machine.arch == Architecture.X86:
+        script += "qemu-system-i386 \\\n"
+    elif machine.arch == Architecture.X86_64:
+        script += "qemu-system-x86_64 \\\n"
+    else:
+        raise Exception("Unreachable")
+    script += "    -display gtk \\\n"
+
+    if machine.cd:
+        script += f"    -cdrom \"{machine.cd}\" \\\n"
+    if machine.kvm:
+        script += "    -enable-kvm \\\n"
+    script += f"    -m {machine.ram}M \\\n"
+    script += "    -hda disk.qcow2 \\\n"
+    script += f"    -smp {machine.cpu} \\\n"
+    script += f"    -name \"{machine.name}\""
+
+    return script
+
+machine = create_machine()
+
+try:
+    fname = f"{machine.name}.sh"
+    with open(fname, "w") as f:
+        f.write(create_script_from_machine(machine))
+    run(["chmod", "+x", fname])
+except Exception as e:
+    print(f"ERROR: Could not create machine script: {e}", file=stderr)
+    exit(1)
